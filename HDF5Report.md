@@ -170,3 +170,21 @@ smaller and slower. Level 19 reduces size from 1.51 GiB to 1.23 GiB, but write
 time increases from 34.08s to 470.96s. It is still larger and much slower than
 the Blosc Zstd bitshuffle result, which remains the best HDF5 size result here
 (979.76 MiB in 23.11s).
+
+## Additional Low-Level Zstd Test
+
+This follow-up tests standalone `hdf5plugin.Zstd` at lower compression levels
+1 through 3. These levels are intended to trade compression ratio for speed.
+
+Full-run results:
+
+| Codec | Status | Readback | Size | Ratio vs Raw | Write Time (s) | Throughput (MiB/s) | Path |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `zstd_3` | ok | True | 1.55 GiB | 1.86x | 28.13 | 104.75 | `/home/administrator/GridData/data/ERA5-temperature-May2026_hdf5_zstd_low/zstd_3.h5` |
+| `zstd_2` | ok | True | 1.56 GiB | 1.85x | 18.90 | 155.91 | `/home/administrator/GridData/data/ERA5-temperature-May2026_hdf5_zstd_low/zstd_2.h5` |
+| `zstd_1` | ok | True | 1.71 GiB | 1.69x | 16.44 | 179.23 | `/home/administrator/GridData/data/ERA5-temperature-May2026_hdf5_zstd_low/zstd_1.h5` |
+
+Compared with the earlier standalone `zstd_5` result (1.51 GiB in 34.08s),
+level 3 is slightly larger but faster, while levels 1 and 2 give up more size
+for speed. None of the low standalone Zstd levels beats Blosc Zstd bitshuffle
+on either size or the combined size/speed tradeoff for this dataset.

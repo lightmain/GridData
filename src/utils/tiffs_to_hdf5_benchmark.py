@@ -90,6 +90,21 @@ def codec_specs() -> dict[str, CodecSpec]:
             ),
             "hdf5plugin Blosc Zstandard level 5 with bitshuffle",
         ),
+        "zstd_1": CodecSpec(
+            "zstd_1",
+            dict(hdf5plugin.Zstd(clevel=1)),
+            "hdf5plugin Zstandard level 1",
+        ),
+        "zstd_2": CodecSpec(
+            "zstd_2",
+            dict(hdf5plugin.Zstd(clevel=2)),
+            "hdf5plugin Zstandard level 2",
+        ),
+        "zstd_3": CodecSpec(
+            "zstd_3",
+            dict(hdf5plugin.Zstd(clevel=3)),
+            "hdf5plugin Zstandard level 3",
+        ),
         "zstd_5": CodecSpec(
             "zstd_5",
             dict(hdf5plugin.Zstd(clevel=5)),

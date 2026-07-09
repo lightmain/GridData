@@ -127,3 +127,21 @@ smaller and slower. Level 19 reduces size from 1.52 GiB to 1.23 GiB, but write
 time increases from 36.49s to 466.90s. It is still larger and much slower than
 the Blosc Zstd bitshuffle result, which remains the best Zarr choice here
 (979.79 MiB in 11.89s).
+
+## Additional Low-Level Zstd Test
+
+This follow-up tests standalone `numcodecs.Zstd` at lower compression levels
+1 through 3. These levels are intended to trade compression ratio for speed.
+
+Full-run results:
+
+| Codec | Status | Size | Ratio vs Raw | Write Time (s) | Throughput (MiB/s) | Path |
+|---|---:|---:|---:|---:|---:|---|
+| `zstd_3` | ok | 1.56 GiB | 1.85x | 26.13 | 112.75 | `/home/administrator/GridData/data/ERA5-temperature-May2026_zarr_zstd_low/zstd_3.zarr` |
+| `zstd_2` | ok | 1.57 GiB | 1.84x | 18.93 | 155.69 | `/home/administrator/GridData/data/ERA5-temperature-May2026_zarr_zstd_low/zstd_2.zarr` |
+| `zstd_1` | ok | 1.72 GiB | 1.67x | 16.31 | 180.71 | `/home/administrator/GridData/data/ERA5-temperature-May2026_zarr_zstd_low/zstd_1.zarr` |
+
+Compared with the earlier standalone `zstd_5` result (1.52 GiB in 36.49s),
+level 3 is slightly larger but faster, while levels 1 and 2 give up more size
+for speed. None of the low standalone Zstd levels beats Blosc Zstd bitshuffle
+on either size or the combined size/speed tradeoff for this dataset.

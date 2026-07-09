@@ -1,38 +1,38 @@
-"""Benchmark storing hourly ERA5 TIFF files in Zarr arrays.
+"""Benchmark storing hourly ERA5 TIFF files in HDF5 datasets.
 
 The input is the directory of 744 tiled LZW TIFF files produced from the GRIB
-file. Each benchmark writes a separate 3D Zarr array with dimensions
-``time, latitude, longitude``.
+file. Each benchmark writes a separate HDF5 file containing a 3D dataset with
+dimensions ``time, latitude, longitude``.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+import h5py
+import hdf5plugin
 import numpy as np
 import tifffile
-import zarr
-from numcodecs import Blosc, GZip, Zlib, Zstd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "ERA5-temperature-May2026_tiffs"
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "ERA5-temperature-May2026_zarr_benchmark"
-DEFAULT_REPORT = PROJECT_ROOT / "ZarrReport.md"
+DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "ERA5-temperature-May2026_hdf5_benchmark"
+DEFAULT_REPORT = PROJECT_ROOT / "HDF5Report.md"
 DEFAULT_CHUNKS = (24, 128, 256)
+DATASET_NAME = "temperature_2m"
 
 
 @dataclass(frozen=True)
 class CodecSpec:
     name: str
-    compressor: Any
+    dataset_kwargs: dict[str, Any]
     description: str
 
 
@@ -44,41 +44,83 @@ class BenchmarkResult:
     size_bytes: int | None
     elapsed_seconds: float
     throughput_mib_s: float | None
-    compressor_config: dict[str, Any] | None
+    dataset_kwargs: dict[str, Any]
+    description: str
+    readback_ok: bool
     error: str | None = None
 
 
 def codec_specs() -> dict[str, CodecSpec]:
     return {
-        "none": CodecSpec("none", None, "No compressor baseline"),
+        "none": CodecSpec("none", {}, "No compression baseline"),
+        "gzip_4_shuffle": CodecSpec(
+            "gzip_4_shuffle",
+            {"compression": "gzip", "compression_opts": 4, "shuffle": True},
+            "Built-in HDF5 gzip level 4 with shuffle",
+        ),
+        "lzf_shuffle": CodecSpec(
+            "lzf_shuffle",
+            {"compression": "lzf", "shuffle": True},
+            "h5py LZF with shuffle",
+        ),
+        "lz4": CodecSpec(
+            "lz4",
+            dict(hdf5plugin.LZ4()),
+            "hdf5plugin LZ4",
+        ),
         "blosc_lz4_bitshuffle": CodecSpec(
             "blosc_lz4_bitshuffle",
-            Blosc(cname="lz4", clevel=5, shuffle=Blosc.BITSHUFFLE),
-            "Blosc LZ4 level 5 with bitshuffle",
+            dict(
+                hdf5plugin.Blosc(
+                    cname="lz4",
+                    clevel=5,
+                    shuffle=hdf5plugin.Blosc.BITSHUFFLE,
+                )
+            ),
+            "hdf5plugin Blosc LZ4 level 5 with bitshuffle",
         ),
         "blosc_zstd_bitshuffle": CodecSpec(
             "blosc_zstd_bitshuffle",
-            Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE),
-            "Blosc Zstandard level 5 with bitshuffle",
+            dict(
+                hdf5plugin.Blosc(
+                    cname="zstd",
+                    clevel=5,
+                    shuffle=hdf5plugin.Blosc.BITSHUFFLE,
+                )
+            ),
+            "hdf5plugin Blosc Zstandard level 5 with bitshuffle",
         ),
-        "blosc_zstd_shuffle": CodecSpec(
-            "blosc_zstd_shuffle",
-            Blosc(cname="zstd", clevel=5, shuffle=Blosc.SHUFFLE),
-            "Blosc Zstandard level 5 with byte shuffle",
+        "zstd_5": CodecSpec(
+            "zstd_5",
+            dict(hdf5plugin.Zstd(clevel=5)),
+            "hdf5plugin Zstandard level 5",
         ),
-        "zstd_5": CodecSpec("zstd_5", Zstd(level=5), "Zstandard level 5"),
-        "zstd_9": CodecSpec("zstd_9", Zstd(level=9), "Zstandard level 9"),
-        "zstd_15": CodecSpec("zstd_15", Zstd(level=15), "Zstandard level 15"),
-        "zstd_19": CodecSpec("zstd_19", Zstd(level=19), "Zstandard level 19"),
-        "zstd_22": CodecSpec("zstd_22", Zstd(level=22), "Zstandard level 22"),
-        "zlib_6": CodecSpec("zlib_6", Zlib(level=6), "Zlib level 6"),
-        "gzip_6": CodecSpec("gzip_6", GZip(level=6), "GZip level 6"),
+        "zstd_9": CodecSpec(
+            "zstd_9",
+            dict(hdf5plugin.Zstd(clevel=9)),
+            "hdf5plugin Zstandard level 9",
+        ),
+        "zstd_15": CodecSpec(
+            "zstd_15",
+            dict(hdf5plugin.Zstd(clevel=15)),
+            "hdf5plugin Zstandard level 15",
+        ),
+        "zstd_19": CodecSpec(
+            "zstd_19",
+            dict(hdf5plugin.Zstd(clevel=19)),
+            "hdf5plugin Zstandard level 19",
+        ),
+        "zstd_22": CodecSpec(
+            "zstd_22",
+            dict(hdf5plugin.Zstd(clevel=22)),
+            "hdf5plugin Zstandard level 22",
+        ),
     }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert ERA5 TIFF files to Zarr and benchmark compressors."
+        description="Convert ERA5 TIFF files to HDF5 and benchmark compressors."
     )
     parser.add_argument(
         "--input-dir",
@@ -90,7 +132,7 @@ def parse_args() -> argparse.Namespace:
         "--output-root",
         type=Path,
         default=DEFAULT_OUTPUT_ROOT,
-        help=f"Directory for benchmark .zarr outputs. Default: {DEFAULT_OUTPUT_ROOT}",
+        help=f"Directory for benchmark .h5 outputs. Default: {DEFAULT_OUTPUT_ROOT}",
     )
     parser.add_argument(
         "--report",
@@ -107,7 +149,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunks",
         default=",".join(str(value) for value in DEFAULT_CHUNKS),
-        help="Zarr chunks as time,latitude,longitude. Default: 24,128,256",
+        help="HDF5 chunks as time,latitude,longitude. Default: 24,128,256",
     )
     parser.add_argument(
         "--limit",
@@ -118,7 +160,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace existing output .zarr directories.",
+        help="Replace existing output .h5 files.",
     )
     return parser.parse_args()
 
@@ -151,14 +193,6 @@ def tiff_files(input_dir: Path, limit: int | None) -> list[Path]:
     return files
 
 
-def directory_size(path: Path) -> int:
-    total = 0
-    for child in path.rglob("*"):
-        if child.is_file():
-            total += child.stat().st_size
-    return total
-
-
 def format_bytes(size: int | None) -> str:
     if size is None:
         return "n/a"
@@ -171,11 +205,14 @@ def format_bytes(size: int | None) -> str:
     return f"{size} B"
 
 
-def compressor_config(compressor: Any) -> dict[str, Any] | None:
-    if compressor is None:
-        return None
-    config = compressor.get_config()
-    return {key: value for key, value in config.items()}
+def jsonable(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, tuple):
+        return [jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {key: jsonable(item) for key, item in value.items()}
+    return value
 
 
 def read_stack(files: list[Path]) -> np.ndarray:
@@ -190,74 +227,102 @@ def read_stack(files: list[Path]) -> np.ndarray:
     return stack
 
 
-def create_zarr(
+def coordinate_arrays(shape: tuple[int, int], time_count: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    lat_count, lon_count = shape
+    time = np.arange(time_count, dtype=np.int32)
+    latitude = np.linspace(90.0, -90.0, lat_count, dtype=np.float32)
+    longitude = np.linspace(0.0, 359.75, lon_count, dtype=np.float32)
+    return time, latitude, longitude
+
+
+def create_hdf5(
     files: list[Path],
     input_dir: Path,
     output_path: Path,
     chunks: tuple[int, int, int],
-    compressor: Any,
+    spec: CodecSpec,
     overwrite: bool,
-) -> tuple[float, int]:
+) -> tuple[float, int, bool]:
     if output_path.exists():
         if not overwrite:
             raise FileExistsError(f"{output_path} exists; use --overwrite to replace it")
-        shutil.rmtree(output_path)
+        output_path.unlink()
 
     first = tifffile.imread(files[0])
     if first.ndim != 2:
         raise ValueError(f"Expected 2D TIFF input, got shape {first.shape}")
 
     shape = (len(files), *first.shape)
-    array = zarr.open(
-        str(output_path),
-        mode="w",
-        shape=shape,
-        chunks=chunks,
-        dtype="float32",
-        compressor=compressor,
-        fill_value=np.nan,
-    )
-    array.attrs.update(
-        {
-            "source_tiff_directory": str(input_dir),
-            "dimensions": ["time", "latitude", "longitude"],
-            "shape": list(shape),
-            "chunks": list(chunks),
-            "dtype": "float32",
-            "variable": "2 metre temperature",
-            "short_name": "2t",
-            "units": "K",
-            "grid": {
-                "latitude_points": int(first.shape[0]),
-                "longitude_points": int(first.shape[1]),
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    time_values, latitudes, longitudes = coordinate_arrays(first.shape, len(files))
+
+    started = time.perf_counter()
+    with h5py.File(output_path, "w") as handle:
+        handle.attrs.update(
+            {
+                "source_tiff_directory": str(input_dir),
+                "variable": "2 metre temperature",
+                "short_name": "2t",
+                "units": "K",
+                "grid_type": "regular_ll",
                 "latitude_first": 90.0,
                 "latitude_last": -90.0,
                 "longitude_first": 0.0,
                 "longitude_last": 359.75,
                 "resolution_degrees": 0.25,
-            },
-            "input_files": [path.name for path in files],
-        }
-    )
+                "codec": spec.name,
+                "codec_description": spec.description,
+            }
+        )
+        handle.create_dataset("time", data=time_values)
+        handle["time"].attrs["units"] = "hours since 2026-05-01 00:00:00"
+        handle.create_dataset("latitude", data=latitudes)
+        handle["latitude"].attrs["units"] = "degrees_north"
+        handle.create_dataset("longitude", data=longitudes)
+        handle["longitude"].attrs["units"] = "degrees_east"
 
-    started = time.perf_counter()
-    time_chunk = chunks[0]
-    for start in range(0, len(files), time_chunk):
-        stop = min(start + time_chunk, len(files))
-        array[start:stop, :, :] = read_stack(files[start:stop])
-        print(f"  wrote time slice {start}:{stop}", flush=True)
+        dataset = handle.create_dataset(
+            DATASET_NAME,
+            shape=shape,
+            dtype="float32",
+            chunks=chunks,
+            fillvalue=np.nan,
+            **spec.dataset_kwargs,
+        )
+        dataset.attrs.update(
+            {
+                "dimensions": json.dumps(["time", "latitude", "longitude"]),
+                "shape": json.dumps(list(shape)),
+                "chunks": json.dumps(list(chunks)),
+                "dtype": "float32",
+                "units": "K",
+                "long_name": "2 metre temperature",
+                "input_file_count": len(files),
+            }
+        )
+
+        time_chunk = chunks[0]
+        for start in range(0, len(files), time_chunk):
+            stop = min(start + time_chunk, len(files))
+            dataset[start:stop, :, :] = read_stack(files[start:stop])
+            print(f"  wrote time slice {start}:{stop}", flush=True)
+
+        handle.flush()
     elapsed = time.perf_counter() - started
 
-    # Force a small readback so failures surface during the benchmark.
-    sample = array[0, 0:4, 0:4]
-    if sample.shape != (4, 4):
-        raise ValueError(f"Unexpected readback sample shape: {sample.shape}")
+    with h5py.File(output_path, "r") as handle:
+        dataset = handle[DATASET_NAME]
+        first_readback = dataset[0]
+        last_readback = dataset[-1]
+    first_ok = np.array_equal(first_readback, tifffile.imread(files[0]).astype(np.float32, copy=False))
+    last_ok = np.array_equal(last_readback, tifffile.imread(files[-1]).astype(np.float32, copy=False))
 
-    return elapsed, int(np.prod(shape) * np.dtype("float32").itemsize)
+    return elapsed, int(np.prod(shape) * np.dtype("float32").itemsize), bool(first_ok and last_ok)
 
 
 def run_benchmark(
     files: list[Path],
+    input_dir: Path,
     output_root: Path,
     chunks: tuple[int, int, int],
     codecs: list[CodecSpec],
@@ -266,19 +331,19 @@ def run_benchmark(
     output_root.mkdir(parents=True, exist_ok=True)
     results: list[BenchmarkResult] = []
     for spec in codecs:
-        output_path = output_root / f"{spec.name}.zarr"
+        output_path = output_root / f"{spec.name}.h5"
         print(f"Running codec: {spec.name} -> {output_path}", flush=True)
         started = time.perf_counter()
         try:
-            elapsed, uncompressed_bytes = create_zarr(
+            elapsed, uncompressed_bytes, readback_ok = create_hdf5(
                 files=files,
-                input_dir=files[0].parent,
+                input_dir=input_dir,
                 output_path=output_path,
                 chunks=chunks,
-                compressor=spec.compressor,
+                spec=spec,
                 overwrite=overwrite,
             )
-            size_bytes = directory_size(output_path)
+            size_bytes = output_path.stat().st_size
             throughput = (uncompressed_bytes / (1024 * 1024)) / elapsed
             results.append(
                 BenchmarkResult(
@@ -288,12 +353,14 @@ def run_benchmark(
                     size_bytes=size_bytes,
                     elapsed_seconds=elapsed,
                     throughput_mib_s=throughput,
-                    compressor_config=compressor_config(spec.compressor),
+                    dataset_kwargs=jsonable(spec.dataset_kwargs),
+                    description=spec.description,
+                    readback_ok=readback_ok,
                 )
             )
             print(
                 f"  done: {format_bytes(size_bytes)} in {elapsed:.2f}s "
-                f"({throughput:.2f} MiB/s)",
+                f"({throughput:.2f} MiB/s), readback_ok={readback_ok}",
                 flush=True,
             )
         except Exception as exc:
@@ -303,10 +370,12 @@ def run_benchmark(
                     codec=spec.name,
                     status="failed",
                     path=output_path,
-                    size_bytes=directory_size(output_path) if output_path.exists() else None,
+                    size_bytes=output_path.stat().st_size if output_path.exists() else None,
                     elapsed_seconds=elapsed,
                     throughput_mib_s=None,
-                    compressor_config=compressor_config(spec.compressor),
+                    dataset_kwargs=jsonable(spec.dataset_kwargs),
+                    description=spec.description,
+                    readback_ok=False,
                     error=str(exc),
                 )
             )
@@ -331,22 +400,39 @@ def write_report(
     )
 
     lines = [
-        "# Zarr Compression Report",
+        "# HDF5 Compression Report",
         "",
         "## Input",
         "",
         f"- TIFF directory: `{input_dir}`",
         f"- TIFF file count: `{len(files)}`",
+        f"- Dataset: `/{DATASET_NAME}`",
         f"- Array shape: `{shape}` (`time, latitude, longitude`)",
         "- Data type: `float32`",
         f"- Uncompressed array bytes: `{uncompressed_bytes}` ({format_bytes(uncompressed_bytes)})",
-        f"- Zarr chunks: `{chunks}`",
+        f"- HDF5 chunks: `{chunks}`",
         f"- Output root: `{output_root}`",
+        "",
+        "## Compression Notes",
+        "",
+        "- HDF5 compression is configured per dataset through the filter pipeline.",
+        "- Compressed HDF5 datasets must use chunked layout; this benchmark uses `(24, 128, 256)` unless overridden.",
+        "- This report only benchmarks lossless methods: built-in gzip/lzf and hdf5plugin LZ4/Blosc/Zstd filters.",
+        "- `shuffle` and `bitshuffle` are lossless prefilters intended to improve compression of numeric arrays.",
+        "- Built-in gzip level 9 was probed separately and skipped from the full benchmark because it completed only one 24-hour chunk in about 30 seconds.",
+        "",
+        "## Environment",
+        "",
+        f"- h5py: `{h5py.__version__}`",
+        f"- HDF5: `{h5py.version.hdf5_version}`",
+        f"- hdf5plugin: `{hdf5plugin.version}`",
+        f"- numpy: `{np.__version__}`",
+        f"- tifffile: `{tifffile.__version__}`",
         "",
         "## Results",
         "",
-        "| Codec | Status | Size | Ratio vs Raw | Write Time (s) | Throughput (MiB/s) | Path |",
-        "|---|---:|---:|---:|---:|---:|---|",
+        "| Codec | Status | Readback | Size | Ratio vs Raw | Write Time (s) | Throughput (MiB/s) | Path |",
+        "|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for result in sorted_results:
         ratio = (
@@ -361,30 +447,19 @@ def write_report(
         )
         lines.append(
             "| "
-            f"`{result.codec}` | {result.status} | {format_bytes(result.size_bytes)} | "
-            f"{ratio} | {result.elapsed_seconds:.2f} | {throughput} | "
-            f"`{result.path}` |"
+            f"`{result.codec}` | {result.status} | {result.readback_ok} | "
+            f"{format_bytes(result.size_bytes)} | {ratio} | "
+            f"{result.elapsed_seconds:.2f} | {throughput} | `{result.path}` |"
         )
 
-    lines.extend(
-        [
-            "",
-            "## Codec Selection Notes",
-            "",
-            "- The benchmark uses Zarr v2 because Zarr 3.1.6 stalled during local array creation in this environment.",
-            "- The tested codecs come from numcodecs' documented compression codecs: Blosc, GZip, Zlib, and Zstd.",
-            "- Blosc was tested with LZ4 and Zstd backends plus shuffle/bitshuffle variants because these are common choices for numeric arrays.",
-            "",
-            "",
-            "## Compressor Configs",
-            "",
-        ]
-    )
+    lines.extend(["", "## Codec Configs", ""])
     for result in results:
         lines.append(f"### `{result.codec}`")
         lines.append("")
+        lines.append(result.description)
+        lines.append("")
         lines.append("```json")
-        lines.append(json.dumps(result.compressor_config, indent=2, sort_keys=True))
+        lines.append(json.dumps(result.dataset_kwargs, indent=2, sort_keys=True))
         lines.append("```")
         if result.error:
             lines.append("")
@@ -399,9 +474,11 @@ def main() -> int:
     try:
         chunks = parse_chunks(args.chunks)
         codecs = resolve_codecs(args.codecs)
-        files = tiff_files(args.input_dir.resolve(), args.limit)
+        input_dir = args.input_dir.resolve()
+        files = tiff_files(input_dir, args.limit)
         results = run_benchmark(
             files=files,
+            input_dir=input_dir,
             output_root=args.output_root.resolve(),
             chunks=chunks,
             codecs=codecs,
@@ -409,7 +486,7 @@ def main() -> int:
         )
         write_report(
             report_path=args.report.resolve(),
-            input_dir=args.input_dir.resolve(),
+            input_dir=input_dir,
             output_root=args.output_root.resolve(),
             files=files,
             chunks=chunks,

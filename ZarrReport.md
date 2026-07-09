@@ -99,3 +99,31 @@ null
   "level": 6
 }
 ```
+
+## Additional High-Level Zstd Test
+
+This follow-up tests standalone `numcodecs.Zstd` at higher compression levels.
+Available WSL memory during the run was about 12 GiB, while each 24-hour write
+chunk is about 95 MiB of float32 data, so memory was not the limiting factor.
+
+Before the full run, the first 24 hours were tested to estimate runtime:
+
+| Codec | 24-hour Size | 24-hour Time (s) | Decision |
+|---|---:|---:|---|
+| `zstd_9` | 49.51 MiB | 2.16 | Full run |
+| `zstd_15` | 49.48 MiB | 8.49 | Skipped; almost same size as level 9 but much slower |
+| `zstd_19` | 40.60 MiB | 15.62 | Full run |
+| `zstd_22` | 40.59 MiB | 24.41 | Skipped; same size as level 19 but slower |
+
+Full-run results:
+
+| Codec | Status | Size | Ratio vs Raw | Write Time (s) | Throughput (MiB/s) | Path |
+|---|---:|---:|---:|---:|---:|---|
+| `zstd_19` | ok | 1.23 GiB | 2.34x | 466.90 | 6.31 | `/home/administrator/GridData/data/ERA5-temperature-May2026_zarr_zstd_high/zstd_19.zarr` |
+| `zstd_9` | ok | 1.50 GiB | 1.91x | 55.79 | 52.81 | `/home/administrator/GridData/data/ERA5-temperature-May2026_zarr_zstd_high/zstd_9.zarr` |
+
+Compared with the earlier standalone `zstd_5` result, level 9 is only slightly
+smaller and slower. Level 19 reduces size from 1.52 GiB to 1.23 GiB, but write
+time increases from 36.49s to 466.90s. It is still larger and much slower than
+the Blosc Zstd bitshuffle result, which remains the best Zarr choice here
+(979.79 MiB in 11.89s).

@@ -1,3 +1,5 @@
 tifffile
 imagecodecs
 zstandard
+netCDF4
+hdf5plugin

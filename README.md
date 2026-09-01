@@ -49,6 +49,9 @@ data/
   ERA5-temperature-May2026_tiffs/
   ERA5-temperature-May2026_tiffs_test/
   ERA5-temperature-May2026-naive_diff/
+  ERA5-temperature-May2026_mp4_benchmark/
+  ERA5-temperature-May2026_netcdf_benchmark/
+  ERA5-temperature-May2026_ffv1_benchmark/
   ERA5-temperature-May2026_zarr_benchmark/
     none.zarr/
     blosc_lz4_bitshuffle.zarr/
@@ -70,6 +73,9 @@ data/
 | `data/ERA5-temperature-May2026_tiffs/` | 由 GRIB 转出的 744 个逐小时 TIFF，文件名形如 `0001_2t_20260501T0000.tiff`。 |
 | `data/ERA5-temperature-May2026_tiffs_test/` | 少量 TIFF 测试输出，用于快速验证转换流程。 |
 | `data/ERA5-temperature-May2026-naive_diff/` | 朴素时间差分实验输出，仍为 744 个 TIFF。 |
+| `data/ERA5-temperature-May2026_mp4_benchmark/` | ERA5 温度场的 H.264/H.265 MP4 压缩基准输出。 |
+| `data/ERA5-temperature-May2026_netcdf_benchmark/` | 多种无损 NetCDF-4/HDF5 过滤器的完整基准输出。 |
+| `data/ERA5-temperature-May2026_ffv1_benchmark/` | 将 float32 原始字节映射到 BGRA 通道的 FFV1/MKV 无损实验。 |
 | `data/ERA5-temperature-May2026_zarr_benchmark/` | 多种 Zarr 压缩器的完整基准测试输出。 |
 | `data/ERA5-temperature-May2026_zarr_smoke/` | Zarr 小规模 smoke test 输出。 |
 | `data/test_compressed.tiff` | TIFF 元数据检查和解压测试用样例。 |
@@ -230,6 +236,72 @@ conda run -n grib python src/naive_diff/naive_diff_tiff.py \
 当前实验结论见 `NaiveDiffReport.md`：时间差分显著降低了数值范围和方差，但由于
 残差仍以 `float32` 存储，最终无损压缩收益较小，完整数据集目录大小约减少
 `0.79%`。
+
+### `src/utils/tiffs_to_mp4_benchmark.py`
+
+将逐小时 `float32` TIFF 序列用全数据集统一温标映射到 8-bit 灰度，再通过
+FFmpeg 编码为 MP4。脚本默认比较 H.264 CRF 18/23/28 和 H.265 CRF 28，报告
+相对原始 GRIB、TIFF 目录及未压缩 float32 张量的压缩比。每个 MP4 还会被解码
+回温度值，以计算 MAE、RMSE、最大误差和 PSNR。该流程是有损压缩，MP4 不可作为
+原始科学数据的无损替代品。
+
+完整运行：
+
+```bash
+conda run -n utils python src/utils/tiffs_to_mp4_benchmark.py --overwrite
+```
+
+快速测试单个配置：
+
+```bash
+conda run -n utils python src/utils/tiffs_to_mp4_benchmark.py \
+  --limit 10 \
+  --profiles h264_crf23 \
+  --output-dir data/ERA5-temperature-May2026_mp4_smoke \
+  --report Mp4SmokeReport.md \
+  --overwrite
+```
+
+完整实验结果见 `Mp4Report.md`，机器可读结果位于输出目录的 `results.json`。
+
+### `src/utils/tiffs_to_netcdf_benchmark.py`
+
+将逐小时 `float32` TIFF 序列写为带 CF 坐标和单位的 NetCDF-4 文件，并比较
+Deflate、Zstandard、Bzip2、Blosc-LZ4 和 Blosc-Zstandard 五种无损压缩方案。
+默认 chunk 为 `(24, 128, 256)`。每个输出都会按 chunk 读回，并和源 TIFF 的
+IEEE-754 位模式比较，确保压缩过程没有量化或数值变化。
+
+完整运行：
+
+```bash
+conda run -n utils python src/utils/tiffs_to_netcdf_benchmark.py --overwrite
+```
+
+只测试兼容性最好的 Deflate 和速度较高的 Blosc-Zstandard：
+
+```bash
+conda run -n utils python src/utils/tiffs_to_netcdf_benchmark.py \
+  --codecs zlib_6_shuffle blosc_zstd_5_shuffle \
+  --overwrite
+```
+
+完整结果见 `NetCDFReport.md`。Zstandard、Bzip2 和 Blosc 文件依赖相应 HDF5
+filter plugin；需要跨平台和跨软件交换时，优先选择内置 Deflate/zlib 输出。
+
+### `src/utils/tiffs_float32_to_ffv1_benchmark.py`
+
+实验性地把每个 little-endian `float32` 的四个原始字节映射为一个 BGRA 像素：
+B、G、R、A 依次保存 bits 0–7、8–15、16–23、24–31，然后用 FFV1 编码到
+Matroska。默认比较 Rice/context 0 和 range/context 1 两种 FFV1 配置。每个
+输出均完整解码并按 `uint32` 位模式与源 TIFF 比较。
+
+```bash
+conda run -n utils python src/utils/tiffs_float32_to_ffv1_benchmark.py --overwrite
+```
+
+完整结果见 `FFV1Report.md`。这种编码能够逐位保存数据，但 BGRA 的科学含义是
+项目自定义约定，普通视频播放器并不知道像素实际代表四个浮点字节；恢复数据时
+必须以 BGRA 解码，并按 little-endian `float32` 重新解释。
 
 ### `src/utils/inspect_tiff_metadata.py`
 

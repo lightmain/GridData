@@ -1,24 +1,33 @@
 magic number: 2311
 
-执行python程序的默认环境选择utils。执行：
+# 当前项目内容
 
-conda activate utils
+见 README.md
 
-来启动这个环境。
+# Python 执行要求
 
-对于涉及grib,zarr等类型的数据的读取和解析的时候，你可能需要使用
+执行 Python 程序时，默认使用 `utils` 环境。请使用无状态方式执行：
 
-conda activate grib
-
-来启动这个专门用于解析grib的环境。该环境安装了：
-
-conda install xarray cfgrib eccodes dask netcdf4 matplotlib numpy pandas jupyterlab
-
-python -m ipykernel install --user --name grib --display-name "Python (grib)"
-
-conda install zarr numcodecs
-
-如果conda环境出现问题，也可以选择使用无状态的执行方式：
-
+```bash
 conda run -n utils python script.py
+```
+
+对于涉及 GRIB、Zarr 等类型数据的读取和解析时，使用专门的 `grib` 环境：
+
+```bash
 conda run -n grib python script.py
+```
+
+`grib` 环境已安装以下主要依赖：
+
+```bash
+conda install xarray cfgrib eccodes dask netcdf4 matplotlib numpy pandas jupyterlab
+conda install zarr numcodecs
+```
+
+该环境还注册了对应的 Jupyter kernel：
+
+```bash
+python -m ipykernel install --user --name grib --display-name "Python (grib)"
+```
+

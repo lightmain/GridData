@@ -3,7 +3,8 @@ ERA5 2026 年 5 月逐小时 2 米温度场：744 个时间步，每个时间步
 `721 x 1440` 的 `float32` 全球经纬度网格。
 
 仓库中的代码完成了 GRIB 元数据检查、GRIB 到 TIFF 的转换、TIFF 元数据解析、
-TIFF 解压、TIFF 时间序列到 Zarr 的压缩基准测试，以及一个朴素时间差分压缩实验。
+TIFF 解压、TIFF 时间序列到 Zarr/HDF5 的压缩基准测试、逐位 Zstd 压缩实验，
+以及一个朴素时间差分压缩实验。
 
 ## 环境
 
@@ -27,11 +28,12 @@ conda run -n utils python script.py
 conda run -n grib python script.py
 ```
 
-`requirements.txt` 中只列出了部分 TIFF 工具依赖：
+`requirements.txt` 中列出了 TIFF 工具和简单位平面实验的基础依赖：
 
 ```text
 tifffile
 imagecodecs
+zstandard
 ```
 
 GRIB 和 Zarr 相关脚本还需要 `eccodes`、`zarr`、`numcodecs`、`numpy` 等依赖，
@@ -162,6 +164,36 @@ gzip_6
 ```
 
 默认 chunk 为 `(24, 128, 256)`。当前完整基准测试结果见 `ZarrReport.md`。
+
+### `src/utils/tiffs_to_simplebitshuffle_benchmark.py`
+
+把按文件名排序的 `float32` TIFF 张量按 C-order 拆成 32 个 IEEE-754 位平面。
+每个 0/1 位平面先用 `packbits` 收紧为每个值 1 bit，再独立压缩为一个连续的
+Zstandard frame。输出不包含 Zarr/HDF5 chunk、坐标或 TIFF 元数据。
+
+完整运行：
+
+```bash
+conda run -n utils python src/utils/tiffs_to_simplebitshuffle_benchmark.py \
+  --input-dir data/ERA5-temperature-May2026_tiffs \
+  --output-dir data/ERA5-temperature-May2026_simplebitshuffle_benchmark \
+  --report SimpleBitshuffleReport.md \
+  --zstd-level 3 \
+  --overwrite
+```
+
+先用一张 TIFF 做 smoke test：
+
+```bash
+conda run -n utils python src/utils/tiffs_to_simplebitshuffle_benchmark.py \
+  --limit 1 \
+  --output-dir data/ERA5-temperature-May2026_simplebitshuffle_smoke \
+  --report SimpleBitshuffleSmokeReport.md \
+  --overwrite
+```
+
+输出是 `bit_00_lsb.zst` 至 `bit_31_sign.zst` 共 32 个文件。报告逐位记录
+压缩前 packed 大小、压缩后大小和压缩比，并给出最终总大小和端到端吞吐量。
 
 ### `src/naive_diff/naive_diff_tiff.py`
 

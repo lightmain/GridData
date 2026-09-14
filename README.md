@@ -282,6 +282,45 @@ conda run -n utils python src/3-dim-diff/analyze_multiple64_normality.py
 
 输出包括正态性效应量、经验分位数，以及 x 轴为 symlog、y 轴为线性频率的对比图。
 
+### `src/3-dim-diff-cut-tail-grib/analyze.py`
+
+直接解析 GRIB1 Binary Data Section 中的 16-bit simple-packing 整数 `X`，把
+`referenceValue` 精确转换为 Q16 整数序列 `r_t`，分别统计 `Δr_t`、
+`ΔtΔlatΔlon X` 和统一 Q16 格点的分布。原始码流整数会与 ecCodes 解码结果逐元素核对。
+
+```bash
+conda run -n grib python src/3-dim-diff-cut-tail-grib/analyze.py --overwrite
+```
+
+结果写入 `data/3-dim-diff-cut-tail-grib/`，报告为
+`reports/ThreeDimDiffCutTailGrib-cn.md`。
+
+### `src/3-dim-diff-cut-tail-float/analyze.py`
+
+每个时间片分别保存 `<256 K` 的最低 7 位和 `>256 K` 的最低 6 位，清零尾部后
+对 float32 位模式整数进行三维差分，并统计纯低温、纯高温和跨 256 K stencil。
+变换在全量运行中执行 bit-exact 恢复校验。
+
+```bash
+conda run -n grib python src/3-dim-diff-cut-tail-float/analyze.py --overwrite
+```
+
+结果写入 `data/3-dim-diff-cut-tail-float/`，报告为
+`reports/ThreeDimDiffCutTailFloat-cn.md`。
+
+### `src/3-dim-diff-noise/analyze.py`
+
+使用固定种子 `2311`，分别把最低 7 位和最低 8 位替换为时空独立均匀随机位，
+严格保持更高位不变，再与原始 float32 位模式执行相同三维差分统计。
+
+```bash
+conda run -n grib python src/3-dim-diff-noise/analyze.py --overwrite
+```
+
+结果写入 `data/3-dim-diff-noise/`，报告为 `reports/ThreeDimDiffNoise-cn.md`。
+
+三个实验的完整计划见 `plan/three-independent-3d-diff-experiments-cn.md`。
+
 ### `src/utils/tiffs_to_mp4_benchmark.py`
 
 将逐小时 `float32` TIFF 序列用全数据集统一温标映射到 8-bit 灰度，再通过

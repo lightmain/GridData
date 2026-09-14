@@ -319,6 +319,19 @@ conda run -n grib python src/3-dim-diff-noise/analyze.py --overwrite
 
 结果写入 `data/3-dim-diff-noise/`，报告为 `reports/ThreeDimDiffNoise-cn.md`。
 
+### `src/3-dim-diff-noise/benchmark_containers.py`
+
+把同一低 7/8 位白化结果实际写成 tiled LZW TIFF、Blosc-Zstd bitshuffle Zarr
+和 HDF5，并与原始数据在同一环境中比较文件码率。写入后逐 TIFF 或逐时间 chunk
+执行 float32 位级无损校验。
+
+```bash
+conda run -n utils python src/3-dim-diff-noise/benchmark_containers.py --overwrite
+```
+
+输出位于 `data/3-dim-diff-noise-container-benchmark/`，分析报告为
+`reports/WhitenedContainerBenchmark-cn.md`。
+
 三个实验的完整计划见 `plan/three-independent-3d-diff-experiments-cn.md`。
 
 ### `src/utils/tiffs_to_mp4_benchmark.py`

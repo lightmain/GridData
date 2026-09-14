@@ -237,6 +237,51 @@ conda run -n grib python src/naive_diff/naive_diff_tiff.py \
 残差仍以 `float32` 存储，最终无损压缩收益较小，完整数据集目录大小约减少
 `0.79%`。
 
+### `src/3-dim-diff/uint32_3d_diff_distribution.py`
+
+把每个 `float32` 的 IEEE-754 原始 4 字节无损重解释为 little-endian `uint32`，
+然后对 `(time, latitude, longitude)` 张量做可逆的三轴前向差分。脚本流式读取
+TIFF，并分别统计三维内部、三个二维边界面、三条一维边界棱和一个顶点的精确
+整数频数；差分在 `int64` 中计算以避免无符号回绕。
+
+```bash
+conda run -n utils python src/3-dim-diff/uint32_3d_diff_distribution.py \
+  --input-dir data/ERA5-temperature-May2026_tiffs \
+  --output-dir data/ERA5-temperature-May2026_uint32_3d_diff \
+  --report reports/Uint32ThreeDimensionalDiffReport-cn.md \
+  --overwrite
+```
+
+输出目录中的 `results.json` 是机器可读摘要，`histograms/*.csv.gz` 是各区域完整
+的精确 `(value, count)` 频数表。报告同时给出分位数、熵、0 占比、最高频整数和
+ZigZag 后所需 bit-width 的分布。
+
+用 Matplotlib 根据上述精确统计生成图表：
+
+```bash
+conda run -n utils python src/3-dim-diff/plot_uint32_3d_diff_distribution.py
+```
+
+图表默认写入 `reports/figures/uint32_3d_diff/`，并包括区域结构总览、内部差分的
+完整频率散点图、ZigZag 位宽累计分布和码率尺度比较。
+
+进一步定位内部差分中少量非 64 倍数的来源：
+
+```bash
+conda run -n utils python src/3-dim-diff/analyze_non64_residuals.py
+```
+
+该脚本逐个检查 `2 x 2 x 2` 差分 stencil 是否跨越 `float32` 在 256 K 处的指数
+边界，输出 `non64_diagnostics.json` 和诊断图，不依赖 ecCodes 或 tifffile。
+
+排除非 64 倍数后，比较内部差分和同均值、同方差的离散化正态分布：
+
+```bash
+conda run -n utils python src/3-dim-diff/analyze_multiple64_normality.py
+```
+
+输出包括正态性效应量、经验分位数，以及 x 轴为 symlog、y 轴为线性频率的对比图。
+
 ### `src/utils/tiffs_to_mp4_benchmark.py`
 
 将逐小时 `float32` TIFF 序列用全数据集统一温标映射到 8-bit 灰度，再通过

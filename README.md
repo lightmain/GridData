@@ -332,6 +332,20 @@ conda run -n utils python src/3-dim-diff-noise/benchmark_containers.py --overwri
 输出位于 `data/3-dim-diff-noise-container-benchmark/`，分析报告为
 `reports/WhitenedContainerBenchmark-cn.md`。
 
+### `src/3-dim-diff-zarr-hdf5/benchmark.py`
+
+把 float32 位模式按 chunk 转为 uint32，执行模 2^32 三维差分、可选 ZigZag、
+四区域重排和 bitshuffle，再用相同的 Blosc-Zstd 参数实际写入 Zarr 与 HDF5。
+实验包含原始、低 7 位白化和低 8 位白化数据，所有输出均逐 chunk 位级恢复验证。
+
+```bash
+conda run -n utils python src/3-dim-diff-zarr-hdf5/benchmark.py --overwrite
+```
+
+输出位于 `data/3-dim-diff-zarr-hdf5/`，报告为
+`reports/ThreeDimDiffZarrHdf5-cn.md`。当前实现是应用层预变换，普通客户端读到的
+物理数据为编码后的 uint32；透明读取需要后续封装为 Zarr codec 或 HDF5 filter。
+
 三个实验的完整计划见 `plan/three-independent-3d-diff-experiments-cn.md`。
 
 ### `src/utils/tiffs_to_mp4_benchmark.py`
